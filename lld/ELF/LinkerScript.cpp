@@ -1195,9 +1195,11 @@ bool LinkerScript::assignOffsets(OutputSection *sec) {
   } else {
     if (state->memRegion)
       dot = state->memRegion->curPos;
-    if (sec->addrExpr)
+    if (sec->addrExpr) {
+      if (hasSectionsCommand)
+        dot = savedDot;
       setDot(sec->addrExpr, sec->location, false);
-
+    }
     // If the address of the section has been moved forward by an explicit
     // expression so that it now starts past the current curPos of the enclosing
     // region, we need to expand the current region to account for the space
