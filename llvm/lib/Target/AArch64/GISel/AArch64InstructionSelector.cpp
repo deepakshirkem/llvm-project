@@ -3158,6 +3158,36 @@ bool AArch64InstructionSelector::select(MachineInstr &I) {
         MRI.setRegBank(Trunc.getReg(0), RBI.getRegBank(AArch64::GPRRegBankID));
         I.getOperand(2).setReg(Trunc.getReg(0));
       }
+
+      // Mirror tryShiftAmountMod from AArch64DAGToDAGISel.
+      // AArch64 shift instructions only use the low 5 bits (i32) or 6 bits
+      // (i64) of the shift amount. If the shift amount is zero-extended from
+      // a narrower type, or masked with an AND that covers enough bits, we
+      // can remove the redundant operation.
+      if (!SrcTy.isVector()) {
+        unsigned Bits = SrcTy.getSizeInBits() == 32 ? 5 : 6;
+        Register NewShiftReg = I.getOperand(2).getReg();
+
+        // Skip over G_ZEXT of the shift amount.
+        MachineInstr *ShiftAmtDef = MRI.getVRegDef(NewShiftReg);
+        if (ShiftAmtDef && ShiftAmtDef->getOpcode() == TargetOpcode::G_ZEXT &&
+            MRI.hasOneNonDBGUse(NewShiftReg)) {
+          NewShiftReg = ShiftAmtDef->getOperand(1).getReg();
+          ShiftAmtDef = MRI.getVRegDef(NewShiftReg);
+        }
+
+        // Skip over G_AND with a mask that covers at least Bits bits.
+        if (ShiftAmtDef && ShiftAmtDef->getOpcode() == TargetOpcode::G_AND &&
+            MRI.hasOneNonDBGUse(NewShiftReg)) {
+          Register MaskReg = ShiftAmtDef->getOperand(2).getReg();
+          auto MaskVal = getIConstantVRegVal(MaskReg, MRI);
+          if (MaskVal && llvm::countr_one(MaskVal->getZExtValue()) >= Bits)
+            NewShiftReg = ShiftAmtDef->getOperand(1).getReg();
+        }
+
+        if (NewShiftReg != I.getOperand(2).getReg())
+          I.getOperand(2).setReg(NewShiftReg);
+      }
     }
 
     const unsigned OpSize = Ty.getSizeInBits();
